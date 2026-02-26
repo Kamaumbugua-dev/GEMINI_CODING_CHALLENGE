@@ -1,0 +1,62 @@
+# =============================================================================
+# Cloud Build CI/CD Pipeline — Voice UI Navigator
+# =============================================================================
+# Triggered automatically on every push to the main/master branch.
+# Builds the Docker image, pushes to Artifact Registry, and deploys to Cloud Run.
+#
+# To connect this to your GitHub repo:
+#   Cloud Console → Cloud Build → Triggers → Connect Repository
+# =============================================================================
+
+substitutions:
+  _REGION: us-central1
+  _SERVICE_NAME: voice-navigator
+  _REPO_NAME: voice-navigator-repo
+  _IMAGE: ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO_NAME}/${_SERVICE_NAME}
+
+steps:
+  # Step 1: Build the Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - '${_IMAGE}:${SHORT_SHA}'
+      - '-t'
+      - '${_IMAGE}:latest'
+      - '.'
+    id: 'build-image'
+
+  # Step 2: Push both tagged versions to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '${_IMAGE}:${SHORT_SHA}']
+    id: 'push-sha-tag'
+    waitFor: ['build-image']
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '${_IMAGE}:latest']
+    id: 'push-latest-tag'
+    waitFor: ['build-image']
+
+  # Step 3: Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - '${_SERVICE_NAME}'
+      - '--image=${_IMAGE}:${SHORT_SHA}'
+      - '--platform=managed'
+      - '--region=${_REGION}'
+      - '--allow-unauthenticated'
+      - '--port=8080'
+      - '--memory=1Gi'
+      - '--update-env-vars=GOOGLE_GENAI_USE_VERTEXAI=False'
+    id: 'deploy-cloud-run'
+    waitFor: ['push-sha-tag']
+
+images:
+  - '${_IMAGE}:${SHORT_SHA}'
+  - '${_IMAGE}:latest'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
